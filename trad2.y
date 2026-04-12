@@ -7,8 +7,8 @@
 #define FF fflush(stdout);
 
 int yylex () ;
-int yyerror () ;
-char *mi_malloc (int) ;
+int yyerror (char *mensaje) ;
+char *my_malloc (int) ;
 char *gen_code (char *) ;
 char *int_to_string (int) ;
 char *char_to_string (char) ;
@@ -38,6 +38,8 @@ typedef struct s_attr {
 %token STRING
 %token MAIN          
 %token WHILE         
+%token PUTS
+%token PRINTF
 
 %right '='                    
 %left '+' '-'                 
@@ -93,8 +95,22 @@ lista_sentencias:
 sentencia:    
     VARIABLE '=' expresion ';' { sprintf (temp, "(setq %s %s)", $1.code, $3.code) ; 
                                 $$.code = gen_code (temp) ; }
-    | '@' expresion ';' { sprintf (temp, "(print %s)", $2.code) ; 
-                            $$.code = gen_code (temp) ; }
+    | PUTS '(' STRING ')' ';' { sprintf (temp, "(print \"%s\")", $3.code) ;
+                                $$.code = gen_code (temp) ; }
+    | PRINTF '(' STRING ',' lista_printf ')' ';' { $$ = $5 ; }
+    ;
+
+lista_printf:
+    elemento_printf { sprintf (temp, "(princ %s)", $1.code) ;
+                      $$.code = gen_code (temp) ; }
+    | elemento_printf ',' lista_printf { sprintf (temp, "(princ %s)\n%s", $1.code, $3.code) ;
+                                         $$.code = gen_code (temp) ; }
+    ;
+
+elemento_printf:
+    expresion { $$ = $1 ; }
+    | STRING { sprintf (temp, "\"%s\"", $1.code) ;
+               $$.code = gen_code (temp) ; }
     ;
 
 expresion:      
@@ -122,11 +138,11 @@ operando:
 
 int n_line = 1 ;
 
-int yyerror (mensaje)
-char *mensaje ;
+int yyerror (char *mensaje)
 {
     fprintf (stderr, "%s en la linea %d\n", mensaje, n_line) ;
     printf ( "\n") ;	// bye
+    return 0 ;
 }
 
 char *int_to_string (int n)
@@ -168,6 +184,8 @@ typedef struct s_keyword {
 t_keyword keywords [] = { 
     "main",        MAIN,           
     "int",         INTEGER,
+    "puts",        PUTS,
+    "printf",      PRINTF,
     NULL,          0               
 } ;
 
@@ -297,4 +315,5 @@ int yylex ()
 int main ()
 {
     yyparse () ;
+    return 0 ;
 }
