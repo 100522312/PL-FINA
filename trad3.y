@@ -161,7 +161,7 @@ funcion_main:
                                             if (strlen ($7.code) > 0) {
                                                 append_codigo (temp, $7.code) ;
                                             }
-                                            sprintf (temp + strlen (temp), "\n)\n\n(main)") ;
+                                            sprintf (temp + strlen (temp), "\n)\n") ;
                                             $$.code = gen_code (temp) ; }
     ;
 

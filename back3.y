@@ -76,7 +76,8 @@ expression1:  expression                        { ; }  // Lisp can evaluate arit
 
             | '(' PRINT STRING ')'              { printf (" .\" %s\" cr \n", $3.code) ;}
 
-            | '(' PRINC expression1 ')'               { printf (" . \n") ; }    // Princ should be able to print both expreesions and strings
+            | '(' PRINC expression1 ')'               { printf (" . \n") ; } 
+            | '(' PRINC STRING ')'                    { printf (" .\" %s\" \n", $3.code) ; }    // Princ should be able to print both expreesions and strings
            
             | '(' PROGN exprSeq ')'             { /* */ }
 
@@ -88,9 +89,9 @@ expression1:  expression                        { ; }  // Lisp can evaluate arit
 // In real Lisp some expressions like if or Loop-While-Do are only permitted inside defun definitions (level 2 expressions) ==> Future ToDo
 // Level 1 and common expressions (arithmetic etc.) are also permitted inside a defun definition
 
-            | '(' LOOP WHILE                    { /* */  }  
-                 expression                     {  /* */ } 
-                 DO exprSeq ')'                 {  /* */ }
+            | '(' LOOP WHILE                    { printf (" begin ") ;  }  
+                 expression                     { printf (" while \n") ;} 
+                 DO exprSeq ')'                 { printf (" repeat \n") ; }
 
             | '(' ifHead  expression1 ')'       { printf (" THEN\n") ; }     // If Expression then Expression1
                                                                              // ifHead is used to avoid conflicts through partial factorization
@@ -112,7 +113,7 @@ expression:   operand                                   { ; }                // 
             | '(' MOD expression expression ')'         { printf (" mod ") ; }
             | '(' AND expression expression ')'         { printf (" and ") ; }
             | '(' OR expression expression ')'          { printf (" or ") ; }
-            | '(' EQ expression expression ')'          { printf (" = ") ; }
+            | '(' '=' expression expression ')'          { printf (" = ") ; }
             | '(' NEQ expression expression ')'         { printf (" = 0= ") ; } 
             | '(' '<' expression expression ')'         { printf (" < ") ; }
             | '(' LEQ expression expression ')'         { printf (" <= ") ; }
