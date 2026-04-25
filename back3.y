@@ -3,6 +3,7 @@
 #include <ctype.h>            // tolower()
 #include <string.h>           // strcmp() 
 #include <stdlib.h>           // exit()
+#include <stdarg.h>           // variable argument formatting
 
 #define FF fflush(stdout);    // to force immediate printing 
 
@@ -14,8 +15,25 @@ char *my_malloc (int) ;
 char *gen_code (char *) ;
 char *int_to_string (int) ;
 char *char_to_string (char) ;
+char *format_code (const char *, ...) ;
+char *join_code (char *, char *) ;
+char *fetch_ident (char *) ;
+char *store_ident (char *, char *) ;
+char *array_fetch (char *, char *) ;
+char *array_store (char *, char *, char *) ;
+char *params_to_locals (char *) ;
+void add_scalar_decl (char *) ;
+void add_array_decl (char *, int) ;
+void set_current_params (char *) ;
+void clear_current_params () ;
+int is_current_param (char *) ;
 
-char temp [2048] ;
+char temp [4096] ;
+char declarations [65536] = "" ;
+char declared_names [1024][256] ;
+int declared_kinds [1024] ;
+int n_declared = 0 ;
+char current_params [4096] = "" ;
 
 
 // Definitions for explicit attributes
@@ -26,6 +44,169 @@ typedef struct s_attr {
 } t_attr ;
 
 #define YYSTYPE t_attr     // stack of PDA has type t_attr
+
+char *format_code (const char *fmt, ...)
+{
+    va_list args ;
+    int n ;
+    char *p ;
+
+    va_start (args, fmt) ;
+    n = vsnprintf (NULL, 0, fmt, args) ;
+    va_end (args) ;
+
+    p = (char *) my_malloc (n + 1) ;
+
+    va_start (args, fmt) ;
+    vsnprintf (p, n + 1, fmt, args) ;
+    va_end (args) ;
+
+    return p ;
+}
+
+char *join_code (char *a, char *b)
+{
+    int len_a = (a == NULL) ? 0 : strlen (a) ;
+    int len_b = (b == NULL) ? 0 : strlen (b) ;
+    char *p ;
+
+    if (len_a == 0 && len_b == 0)
+        return gen_code ("") ;
+    if (len_a == 0)
+        return gen_code (b) ;
+    if (len_b == 0)
+        return gen_code (a) ;
+
+    p = (char *) my_malloc (len_a + len_b + 2) ;
+    sprintf (p, "%s\n%s", a, b) ;
+    return p ;
+}
+
+int find_decl (char *name)
+{
+    int i ;
+
+    for (i = 0; i < n_declared; i++) {
+        if (strcmp (declared_names [i], name) == 0)
+            return i ;
+    }
+
+    return -1 ;
+}
+
+void add_decl_line (char *line)
+{
+    if (strlen (declarations) > 0)
+        strcat (declarations, "\n") ;
+    strcat (declarations, line) ;
+}
+
+void add_scalar_decl (char *name)
+{
+    int pos ;
+
+    pos = find_decl (name) ;
+    if (pos >= 0)
+        return ;
+
+    strcpy (declared_names [n_declared], name) ;
+    declared_kinds [n_declared++] = 1 ;
+    sprintf (temp, "variable %s", name) ;
+    add_decl_line (temp) ;
+}
+
+void add_array_decl (char *name, int size)
+{
+    int pos ;
+
+    pos = find_decl (name) ;
+    if (pos >= 0)
+        return ;
+
+    strcpy (declared_names [n_declared], name) ;
+    declared_kinds [n_declared++] = 2 ;
+    sprintf (temp, "create %s %d cells allot", name, size) ;
+    add_decl_line (temp) ;
+}
+
+int name_in_list (char *list, char *name)
+{
+    char item [256] ;
+    int i = 0 ;
+    int j ;
+
+    while (list [i] != '\0') {
+        while (list [i] == ' ')
+            i++ ;
+        if (list [i] == '\0')
+            break ;
+
+        j = 0 ;
+        while (list [i] != '\0' && list [i] != ' ' && j < 255)
+            item [j++] = list [i++] ;
+        item [j] = '\0' ;
+
+        if (strcmp (item, name) == 0)
+            return 1 ;
+    }
+
+    return 0 ;
+}
+
+void set_current_params (char *params)
+{
+    if (params == NULL)
+        current_params [0] = '\0' ;
+    else {
+        strncpy (current_params, params, sizeof (current_params) - 1) ;
+        current_params [sizeof (current_params) - 1] = '\0' ;
+    }
+}
+
+void clear_current_params ()
+{
+    current_params [0] = '\0' ;
+}
+
+int is_current_param (char *name)
+{
+    return name_in_list (current_params, name) ;
+}
+
+char *fetch_ident (char *name)
+{
+    if (is_current_param (name))
+        return gen_code (name) ;
+
+    return format_code ("%s @", name) ;
+}
+
+char *store_ident (char *name, char *expr)
+{
+    if (is_current_param (name))
+        return format_code ("%s to %s", expr, name) ;
+
+    add_scalar_decl (name) ;
+    return format_code ("%s %s !", expr, name) ;
+}
+
+char *array_fetch (char *name, char *index)
+{
+    return format_code ("%s %s cells + @", name, index) ;
+}
+
+char *array_store (char *name, char *index, char *expr)
+{
+    return format_code ("%s\n%s %s cells + !", expr, name, index) ;
+}
+
+char *params_to_locals (char *params)
+{
+    if (params == NULL || strlen (params) == 0)
+        return gen_code ("") ;
+
+    return format_code ("{ %s -- }", params) ;
+}
 
 %}
 
@@ -43,6 +224,9 @@ typedef struct s_attr {
 %token DEFUN     
 %token PRINT  
 %token PRINC
+%token AREF
+%token MAKE_ARRAY
+%token RETURN_FROM
 %token AND
 %token IF 
 %token PROGN
@@ -53,83 +237,143 @@ typedef struct s_attr {
 
 
 %%                            // Section 3 Grammar - Semantic Actions
-axiom:        exprSeq                           { ; }      // A Lisp program contains a sequence of at least one expression
+axiom:        exprSeq
+                {
+                    if (strlen (declarations) > 0)
+                        printf ("%s\n", declarations) ;
+                    printf ("%s\n", $1.code) ;
+                }
             ;
 
 
-exprSeq:      expression1                       { ; }      // level 1 expressions must exclude specific level 2 expressions. ToDo in the Future
-                 r_exprSeq                      { ; }
+exprSeq:      expression1 exprSeq               { $$.code = join_code ($1.code, $2.code) ; }
+            | /* lambda */                      { $$.code = gen_code ("") ; }
             ;
 
 
-r_exprSeq:    exprSeq                           { ; }
-            |  /* lambda */                     { ; }
+expression1:  expression                        { $$ = $1 ; }
+
+            | '(' SETQ IDENTIF number ')'       {
+                                                    add_scalar_decl ($3.code) ;
+                                                    $$.code = format_code ("%s %s !", $4.code, $3.code) ;
+                                                }
+
+            | '(' SETQ IDENTIF '(' MAKE_ARRAY number ')' ')' {
+                                                    add_array_decl ($3.code, $6.value) ;
+                                                    $$.code = gen_code ("") ;
+                                                }
+
+            | '(' SETF IDENTIF expression ')'   { $$.code = store_ident ($3.code, $4.code) ; }
+
+            | '(' SETF '(' AREF IDENTIF expression ')' expression ')' {
+                                                    $$.code = array_store ($5.code, $6.code, $8.code) ;
+                                                }
+
+            | '(' PRINT STRING ')'              { $$.code = format_code (".\" %s\" cr", $3.code) ; }
+
+            | '(' PRINC expression ')'          { $$.code = format_code ("%s\n.", $3.code) ; }
+            | '(' PRINC STRING ')'              { $$.code = format_code (".\" %s\"", $3.code) ; }
+
+            | '(' PROGN exprSeq ')'             { $$ = $3 ; }
+
+            | '(' MAIN ')'                      { $$.code = gen_code ("main") ; }
+
+            | '(' RETURN_FROM IDENTIF expression ')' {
+                                                    $$.code = format_code ("%s\nexit", $4.code) ;
+                                                }
+
+            | '(' DEFUN MAIN '(' ')'            { clear_current_params () ; }
+                exprSeq ')'                     {
+                                                    $$.code = format_code (": main recursive\n%s\n;", $7.code) ;
+                                                    clear_current_params () ;
+                                                }
+
+            | '(' DEFUN IDENTIF '(' parametros ')' {
+                                                    set_current_params ($5.code) ;
+                                                }
+                exprSeq ')'                     {
+                                                    $$.code = format_code (": %s recursive %s\n%s\n;",
+                                                                           $3.code, params_to_locals ($5.code), $8.code) ;
+                                                    clear_current_params () ;
+                                                }
+
+            | '(' LOOP WHILE expression DO exprSeq ')' {
+                                                    $$.code = format_code ("begin\n%s\nwhile\n%s\nrepeat", $4.code, $6.code) ;
+                                                }
+
+            | '(' ifHead expression1 ')'        { $$.code = format_code ("%s\n%s\nthen", $2.code, $3.code) ; }
+
+            | '(' ifHead expression1 expression1 ')' {
+                                                    $$.code = format_code ("%s\n%s\nelse\n%s\nthen",
+                                                                           $2.code, $3.code, $4.code) ;
+                                                }
             ;
 
 
-expression1:  expression                        { ; }  // Lisp can evaluate arithmetical (and similar) expressions in REPL mode
-                                                       // REPL Mode should print out the evaluated expressions ==> Future TODO for the Forth translation
-
-            | '(' SETQ IDENTIF number ')'       { printf (" variable %s %s ! \n", $3.code, $3.code) ;}  // This is the declaration of a variable which in Forth has to be of global scope
-                                                                                                      
-            | '(' SETF IDENTIF expression1 ')'                { printf (" %s ! \n", $3.code) ; }    // Using a variable as receiver requires adding the store operator (!) in Forth 
-
-            | '(' PRINT STRING ')'              { printf (" .\" %s\" cr \n", $3.code) ;}
-
-            | '(' PRINC expression1 ')'               { printf (" . \n") ; } 
-            | '(' PRINC STRING ')'                    { printf (" .\" %s\" \n", $3.code) ; }    // Princ should be able to print both expreesions and strings
-           
-            | '(' PROGN exprSeq ')'             { /* */ }
-
-            | '(' MAIN ')'                      { printf (" main\n") ; } // call to the main function 
-
-            | '(' DEFUN MAIN                    { printf (": main \n") ;} 
-                '(' ')' exprSeq ')'             {  printf (" ; \n") ;}
-
-// In real Lisp some expressions like if or Loop-While-Do are only permitted inside defun definitions (level 2 expressions) ==> Future ToDo
-// Level 1 and common expressions (arithmetic etc.) are also permitted inside a defun definition
-
-            | '(' LOOP WHILE                    { printf (" begin ") ;  }  
-                 expression                     { printf (" while \n") ;} 
-                 DO exprSeq ')'                 { printf (" repeat \n") ; }
-
-            | '(' ifHead  expression1 ')'       { printf (" THEN\n") ; }     // If Expression then Expression1
-                                                                             // ifHead is used to avoid conflicts through partial factorization
-
-            | '(' ifHead  expression1           { printf (" ELSE\n") ; }     // If Expression then Expression1 else Expression1
-                 expression1 ')'                {  printf (" THEN\n") ; }    // more than one expression per then or else branch are only allowed nesting them within a PROGN expression
+ifHead:       IF expression                      { $$.code = format_code ("%s\nif", $2.code) ; }
             ;
 
 
-ifHead:       IF expression                     { printf (" IF ") ; }        // Real Lisp restricts if conditions to Boolean type expressions (excluding base operands?) ==> Future TOOD
+parametros:   lista_parametros                  { $$ = $1 ; }
+            | /* lambda */                      { $$.code = gen_code ("") ; }
             ;
 
 
-expression:   operand                                   { ; }                // Common expressions combine arithmetic, relational and boolean expressions, including base operands.
-            | '(' '+' expression expression ')'         { printf (" + ") ; }
-            | '(' '-' expression expression ')'         { printf (" - ") ; }
-            | '(' '*' expression expression ')'         { printf (" * ") ; }
-            | '(' '/' expression expression ')'         { printf (" / ") ; }
-            | '(' MOD expression expression ')'         { printf (" mod ") ; }
-            | '(' AND expression expression ')'         { printf (" and ") ; }
-            | '(' OR expression expression ')'          { printf (" or ") ; }
-            | '(' '=' expression expression ')'          { printf (" = ") ; }
-            | '(' NEQ expression expression ')'         { printf (" = 0= ") ; } 
-            | '(' '<' expression expression ')'         { printf (" < ") ; }
-            | '(' LEQ expression expression ')'         { printf (" <= ") ; }
-            | '(' '>' expression expression ')'         { printf (" > ") ; }
-            | '(' GEQ expression expression ')'         { printf (" >= ") ; }
-            | '(' NOT expression ')'                    { printf (" 0= ") ; }
-            | '(' '-' expression ')'                    { printf (" negate ") ; } // Unary minus operator in Lisp
+lista_parametros:
+              IDENTIF lista_parametros          {
+                                                    if (strlen ($2.code) == 0)
+                                                        $$.code = gen_code ($1.code) ;
+                                                    else
+                                                        $$.code = format_code ("%s %s", $1.code, $2.code) ;
+                                                }
+            | IDENTIF                           { $$.code = gen_code ($1.code) ; }
             ;
 
 
-operand:      IDENTIF                            { printf (" %s @ ", $1.code) ; } // To use a variable as an operand requires adding the fetch operator (@)
-            | number                             { ; }
+argumentos:   expression argumentos             { $$.code = join_code ($1.code, $2.code) ; }
+            | /* lambda */                      { $$.code = gen_code ("") ; }
             ;
 
 
-number:       NUMBER                             { printf (" %d ", $1.value) ; }  // number is an auxiliary Non Terminal to be used in the setq initialization
+expression:   operand                           { $$ = $1 ; }
+            | '(' '+' expression expression ')' { $$.code = format_code ("%s\n%s\n+", $3.code, $4.code) ; }
+            | '(' '-' expression expression ')' { $$.code = format_code ("%s\n%s\n-", $3.code, $4.code) ; }
+            | '(' '*' expression expression ')' { $$.code = format_code ("%s\n%s\n*", $3.code, $4.code) ; }
+            | '(' '/' expression expression ')' { $$.code = format_code ("%s\n%s\n/", $3.code, $4.code) ; }
+            | '(' MOD expression expression ')' { $$.code = format_code ("%s\n%s\nmod", $3.code, $4.code) ; }
+            | '(' AND expression expression ')' { $$.code = format_code ("%s\n%s\nand", $3.code, $4.code) ; }
+            | '(' OR expression expression ')'  { $$.code = format_code ("%s\n%s\nor", $3.code, $4.code) ; }
+            | '(' '=' expression expression ')' { $$.code = format_code ("%s\n%s\n=", $3.code, $4.code) ; }
+            | '(' NEQ expression expression ')' { $$.code = format_code ("%s\n%s\n=\n0=", $3.code, $4.code) ; }
+            | '(' '<' expression expression ')' { $$.code = format_code ("%s\n%s\n<", $3.code, $4.code) ; }
+            | '(' LEQ expression expression ')' { $$.code = format_code ("%s\n%s\n<=", $3.code, $4.code) ; }
+            | '(' '>' expression expression ')' { $$.code = format_code ("%s\n%s\n>", $3.code, $4.code) ; }
+            | '(' GEQ expression expression ')' { $$.code = format_code ("%s\n%s\n>=", $3.code, $4.code) ; }
+            | '(' NOT expression ')'            { $$.code = format_code ("%s\n0=", $3.code) ; }
+            | '(' '-' expression ')'            { $$.code = format_code ("%s\nnegate", $3.code) ; }
+            | '(' AREF IDENTIF expression ')'   { $$.code = array_fetch ($3.code, $4.code) ; }
+            | '(' IDENTIF argumentos ')'        {
+                                                    if (strlen ($3.code) == 0)
+                                                        $$.code = gen_code ($2.code) ;
+                                                    else
+                                                        $$.code = format_code ("%s\n%s", $3.code, $2.code) ;
+                                                }
+            ;
+
+
+operand:      IDENTIF                           { $$.code = fetch_ident ($1.code) ; }
+            | number                            { $$ = $1 ; }
+            ;
+
+
+number:       NUMBER                            {
+                                                    $$.value = $1.value ;
+                                                    $$.code = format_code ("%d", $1.value) ;
+                                                }
+            | '-' NUMBER                        {
+                                                    $$.value = -$2.value ;
+                                                    $$.code = format_code ("%d", -$2.value) ;
+                                                }
             ;
 
 
@@ -207,6 +451,9 @@ t_keyword keywords [] = {     // define the keywords
     "defun",       DEFUN,
     "print",       PRINT,
     "princ",       PRINC,
+    "aref",        AREF,
+    "make-array",  MAKE_ARRAY,
+    "return-from", RETURN_FROM,
     "loop",        LOOP,
     "while",       WHILE,
     "do",          DO,
@@ -314,7 +561,7 @@ int yylex ()
     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
         i = 0 ;
         while (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-            (c >= '0' && c <= '9') || c == '_') && i < 255) {
+            (c >= '0' && c <= '9') || c == '_' || c == '-') && i < 255) {
         temp_str [i++] = tolower (c) ; // ALL TO SMALL LETTERS
         c = getchar () ; 
     } 
@@ -358,5 +605,5 @@ int yylex ()
 
 int main ()
 {
-    yyparse () ;
+    return yyparse () ;
 }

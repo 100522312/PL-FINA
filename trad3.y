@@ -141,6 +141,8 @@ variable:
                 $$.code = gen_code (temp) ; }
     | VARIABLE '=' NUMERO { sprintf (temp, "(setq %s %d)", $1.code, $3.value) ; 
                             $$.code = gen_code (temp) ; }
+    | VARIABLE '=' '-' NUMERO %prec SIGNO_UNARIO { sprintf (temp, "(setq %s %d)", $1.code, -$4.value) ;
+                                                   $$.code = gen_code (temp) ; }
     | VARIABLE '[' NUMERO ']' { sprintf (temp, "(setq %s (make-array %d))", $1.code, $3.value) ;
                                 $$.code = gen_code (temp) ; }
     ;
@@ -167,16 +169,13 @@ funcion_main:
 
 funcion:
     VARIABLE '(' parametros_def ')' '{' { prefijo = $1.code; funcion_actual = $1.code; borrar_loc_vars(); }
-    lista_declaraciones_locales lista_sentencias_funcion retorno_final '}' {
+    lista_declaraciones_locales lista_sentencias_funcion '}' {
         sprintf (temp, "(defun %s (%s)", $1.code, $3.code) ;
         if (strlen ($7.code) > 0) {
             append_codigo (temp, $7.code) ;
         }
         if (strlen ($8.code) > 0) {
             append_codigo (temp, $8.code) ;
-        }
-        if (strlen ($9.code) > 0) {
-            append_codigo (temp, $9.code) ;
         }
         sprintf (temp + strlen (temp), "\n)\n") ;
         $$.code = gen_code (temp) ;
@@ -219,6 +218,9 @@ variable_local:
     | VARIABLE '=' NUMERO { add_loc_var($1.code);
                                 sprintf (temp, "(setq %s_%s %d)", prefijo, $1.code, $3.value) ;
                                 $$.code = gen_code (temp) ; }
+    | VARIABLE '=' '-' NUMERO %prec SIGNO_UNARIO { add_loc_var($1.code);
+                                sprintf (temp, "(setq %s_%s %d)", prefijo, $1.code, -$4.value) ;
+                                $$.code = gen_code (temp) ; }
     | VARIABLE '[' NUMERO ']' { add_loc_var($1.code);
                                 sprintf (temp, "(setq %s_%s (make-array %d))", prefijo, $1.code, $3.value) ;
                                 $$.code = gen_code (temp) ; }
@@ -230,10 +232,26 @@ lista_sentencias:
     ;
 
 lista_sentencias_funcion:
-    sentencia_no_retorno lista_sentencias_funcion { $$.code = combina_codigos ($1.code, $2.code) ; }
+    sentencia_funcion lista_sentencias_funcion {
+        if ($1.value) {
+            if (strlen ($2.code) > 0) {
+                sprintf (temp, "(return-from %s %s)", funcion_actual, $1.code) ;
+                $$.code = combina_codigos (gen_code (temp), $2.code) ;
+            } else {
+                $$.code = gen_code ($1.code) ;
+            }
+        } else {
+            $$.code = combina_codigos ($1.code, $2.code) ;
+        }
+    }
     | /* vacio */ { $$.code = gen_code ("") ; }
     ;
 
+sentencia_funcion:
+    sentencia_no_retorno { $$ = $1 ; $$.value = 0 ; }
+    | RETURN expresion ';' { $$.code = gen_code ($2.code) ;
+                             $$.value = 1 ; }
+    ;
 
 sentencia:
     sentencia_no_retorno { $$ = $1 ; }
@@ -297,11 +315,6 @@ sentencia_no_retorno:
                         $$.code = gen_code(temp);}
     | SWITCH '(' expresion ')' '{' lista_casos bloque_default '}' { sprintf (temp, "(case %s\n%s\n%s)", $3.code, $6.code, $7.code) ;
                                                                     $$.code = gen_code (temp) ; }
-    ;
-
-retorno_final:
-    RETURN expresion ';' { $$.code = gen_code ($2.code) ; }
-    | /* vacio */ { $$.code = gen_code ("") ; }
     ;
 
 lista_casos:
